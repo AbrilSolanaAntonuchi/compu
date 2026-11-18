@@ -1,0 +1,276 @@
+extends Node3D
+## Espacio 3D que aparece detrás de una pared cuando se completa la pintura.
+##
+## Cuando la pintura emite la señal "completada":
+##   1) la pintura y la pared se desvanecen
+##   2) el fondo pasa de blanco a azul noche
+##   3) queda a la vista el escenario (calavera, montaña, luna y piso), ubicado fuera del cuarto
+##
+## Los archivos .glb NO se modifican: se usan tal como están en la carpeta indicada.
+## Se buscan por palabra clave en el nombre (CALAVERA, MONTA, LUNA, PISO), así que da igual
+## si el navegador les agregó "(1)" o si el nombre tiene Ñ.
+##
+## Si los archivos pasaron por un conversor que dejó los ejes en Z-arriba y borró la escala y
+## posición de los objetos (como ImageToStl), el script lo compensa al cargarlos.
+
+@export var ruta_pintura: NodePath = ^"../PinturaCA2"
+@export var ruta_pared: NodePath = ^"../paredS"
+@export var ruta_entorno: NodePath = ^"../WorldEnvironment"
+@export var duracion_desvanecer: float = 3.0
+@export var color_cielo: Color = Color(0.04, 0.08, 0.22)
+
+@export_group("Archivos .glb")
+@export var carpeta_glb: String = "res://escenarios"
+
+@export_group("Disposición")
+## Punto del mundo donde queda el centro del escenario (al nivel del piso del cuarto).
+@export var origen_mundo: Vector3 = Vector3(0.0, -1.45, 5.48)
+## Los modelos de Blender son grandes (la calavera mide 7 m): se reducen con este factor.
+@export var escala_diorama: float = 0.3
+## Posiciones dentro del escenario, en unidades de Blender (antes de reducir).
+@export var pos_calavera: Vector3 = Vector3(1.0, 2.0, 9.0)
+## Centrada en X con la calavera y hacia el fondo (-Z = alejarse del jugador).
+@export var pos_montana: Vector3 = Vector3(0.0, 0.0, 8.0)
+## X negativo = izquierda del jugador. Y = 17 la deja por encima del pico de la montaña (13,3).
+@export var pos_luna: Vector3 = Vector3(-3.0, 7.0, 4.0)
+@export var escala_luna: float = 1.5
+@export var pos_piso: Vector3 = Vector3(0.0, 0.0, -1.7)
+## 1 = el piso con su tamaño de Blender (7,9 unidades); más alto = piso más grande.
+@export var escala_piso: float = 3.0
+
+@export_group("Aspecto")
+## false = se usan los materiales de los .glb tal cual. true = colores de la pintura (noche azul).
+@export var colores_propios: bool = false
+
+# Escala y posición que Blender guardaba en cada objeto (el conversor las borra)
+const ESCALA_PISO_BLENDER := 3.976
+const ESCALA_CUBO_MONTANA := Vector3(5.915, 6.876, 2.023)
+# Valores leídos del propio MONTAÑA_AZUL.glb (ya convertidos a Y-arriba):
+#  - el bloque alto ("Cube") está ATRÁS, en z = -6.509
+#  - la losa baja ("Cube.001") está ADELANTE, en z = 0
+#  - ambos traen un giro de 180° sobre el eje vertical (signos negativos en la escala de Blender)
+const POS_CUBO_MONTANA := Vector3(0.016, 6.6, -6.509)
+const ESCALA_LOSA_MONTANA := Vector3(5.905, 1.0, 4.5405)
+const POS_LOSA_MONTANA := Vector3(0.0125, 0.6407, 0.0)
+const POS_LUNA_BLENDER := Vector3(0.0, 1.0, 0.0)
+
+const PISO_SHADER := """
+shader_type spatial;
+render_mode unshaded;
+uniform vec3 color_a : source_color = vec3(0.20, 0.40, 0.14);
+uniform vec3 color_b : source_color = vec3(0.12, 0.27, 0.10);
+uniform float tam_celda = 0.5;
+varying vec3 pos_mundo;
+void vertex() {
+	pos_mundo = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+void fragment() {
+	vec2 g = floor(pos_mundo.xz / tam_celda);
+	float t = mod(g.x + g.y, 2.0);
+	ALBEDO = mix(color_a, color_b, t);
+}
+"""
+
+var diorama: Node3D
+var z_arriba := false
+var revelado := false
+
+
+func _ready() -> void:
+	visible = false          # oculto (y sin dibujarse) hasta que se complete la pintura
+	_construir()
+
+	var pintura := get_node_or_null(ruta_pintura)
+	if pintura != null and pintura.has_signal("completada"):
+		pintura.completada.connect(_revelar)
+	else:
+		push_warning("RevelarEspacio: no se encontró la pintura en '%s'." % str(ruta_pintura))
+
+
+# ---------------------------------------------------------------- Construcción
+
+func _construir() -> void:
+	var r_calavera := _buscar("CALAVERA")
+	var r_montana := _buscar("MONTA")
+	var r_luna := _buscar("LUNA")
+	var r_piso := _buscar("PISO")
+	z_arriba = _detectar_z_arriba(r_piso)
+	print("RevelarEspacio: archivos -> ", r_calavera, " | ", r_montana, " | ", r_luna, " | ", r_piso,
+			" | ejes Z-arriba: ", z_arriba)
+
+	# Nodo que agrupa y reduce las piezas. Gira 180° para que la calavera mire hacia el cuarto.
+	diorama = Node3D.new()
+	diorama.position = origen_mundo
+	diorama.rotation.y = PI
+	diorama.scale = Vector3.ONE * escala_diorama
+	add_child(diorama)
+
+	var giro_montana := Basis(Vector3.UP, PI)   # el .glb de la montaña viene girado 180° en vertical
+	var t_cubo := Transform3D(giro_montana * Basis.from_scale(ESCALA_CUBO_MONTANA), POS_CUBO_MONTANA)
+	var t_losa := Transform3D(giro_montana * Basis.from_scale(ESCALA_LOSA_MONTANA), POS_LOSA_MONTANA)
+	var t_luna := Transform3D(Basis(), POS_LUNA_BLENDER)
+	var t_piso := Transform3D(Basis.from_scale(Vector3.ONE * ESCALA_PISO_BLENDER * escala_piso), Vector3.ZERO)
+
+	var calavera := _pieza(r_calavera, pos_calavera, Vector3.ONE, [Transform3D.IDENTITY])
+	var montana := _pieza(r_montana, pos_montana, Vector3.ONE, [t_cubo, t_losa])
+	var luna := _pieza(r_luna, pos_luna, Vector3.ONE * escala_luna, [t_luna])
+	var piso := _pieza(r_piso, pos_piso, Vector3.ONE, [t_piso])
+
+	if colores_propios:
+		_pintar(calavera, _material_liso(Color(0.88, 0.86, 0.80), false))
+		_pintar(montana, _material_liso(Color(0.03, 0.08, 0.06), false))
+		_pintar(luna, _material_liso(Color(0.80, 0.90, 1.0), true))
+		var shader := Shader.new()
+		shader.code = PISO_SHADER
+		var mat_piso := ShaderMaterial.new()
+		mat_piso.shader = shader
+		_pintar(piso, mat_piso)
+
+	diorama.add_child(calavera)
+	diorama.add_child(montana)
+	diorama.add_child(luna)
+	diorama.add_child(piso)
+
+	# Luz fría de luna, entre la pared y la calavera
+	var luz := OmniLight3D.new()
+	luz.position = Vector3(0.5, 1.2, 3.5)
+	luz.omni_range = 7.0
+	luz.light_color = Color(0.7, 0.82, 1.0)
+	luz.light_energy = 1.0
+	luz.shadow_enabled = false
+	add_child(luz)
+
+
+## Busca en la carpeta un .glb cuyo nombre contenga la palabra (sin distinguir mayúsculas).
+## También funciona en el juego exportado, donde los archivos aparecen como ".remap".
+func _buscar(palabra: String) -> String:
+	for archivo in DirAccess.get_files_at(carpeta_glb):
+		var nombre: String = archivo.trim_suffix(".remap").trim_suffix(".import")
+		if nombre.to_lower().ends_with(".glb") and palabra in nombre.to_upper():
+			return carpeta_glb + "/" + nombre
+	push_warning("RevelarEspacio: no hay ningún .glb con '%s' en '%s'." % [palabra, carpeta_glb])
+	return ""
+
+
+func _cargar(ruta: String) -> PackedScene:
+	if ruta != "" and ResourceLoader.exists(ruta):
+		var recurso = load(ruta)
+		if recurso is PackedScene:
+			return recurso
+	return null
+
+
+## Los archivos de Blender traen el eje vertical en Y. Los que pasan por ciertos conversores
+## quedan con Z arriba. Se distingue con el piso: es un plano, y su eje "fino" es el vertical.
+func _detectar_z_arriba(ruta_piso: String) -> bool:
+	var escena := _cargar(ruta_piso)
+	if escena == null:
+		return false
+	var instancia := escena.instantiate()
+	var resultado := false
+	for malla in _mallas(instancia):
+		if malla.mesh != null:
+			var tam := malla.mesh.get_aabb().size
+			resultado = tam.z < tam.y
+			break
+	instancia.free()
+	return resultado
+
+
+## Carga un .glb y lo coloca dentro de un contenedor con la posición y escala indicadas.
+## "transformaciones" es la transformación de Blender de cada malla (en orden), que solo se
+## reconstruye cuando el conversor las borró (archivos Z-arriba).
+func _pieza(ruta: String, pos: Vector3, esc: Vector3, transformaciones: Array) -> Node3D:
+	var contenedor := Node3D.new()
+	contenedor.position = pos
+	contenedor.scale = esc
+
+	var escena := _cargar(ruta)
+	if escena == null:
+		push_warning("RevelarEspacio: no se pudo cargar '%s'." % ruta)
+		return contenedor
+
+	var instancia := escena.instantiate() as Node3D
+	if not z_arriba:
+		# Archivo tal cual sale de Blender: se usa sin tocar nada
+		contenedor.add_child(instancia)
+		return contenedor
+
+	# Archivo Z-arriba: se gira -90° en X para dejarlo con Y arriba y se reponen
+	# la escala y la posición que el conversor eliminó
+	var mallas := _mallas(instancia)
+	for i in mallas.size():
+		var malla := mallas[i]
+		var padre := malla.get_parent()
+		if padre != null:
+			padre.remove_child(malla)
+		malla.transform = Transform3D.IDENTITY
+
+		var giro := Node3D.new()
+		giro.rotation_degrees.x = -90.0
+		giro.add_child(malla)
+
+		var base := Node3D.new()
+		if i < transformaciones.size():
+			base.transform = transformaciones[i]
+		base.add_child(giro)
+		contenedor.add_child(base)
+
+	if not mallas.has(instancia):
+		instancia.free()
+	return contenedor
+
+
+func _mallas(nodo: Node) -> Array[MeshInstance3D]:
+	var resultado: Array[MeshInstance3D] = []
+	if nodo is MeshInstance3D:
+		resultado.append(nodo)
+	for hijo in nodo.get_children():
+		resultado.append_array(_mallas(hijo))
+	return resultado
+
+
+func _pintar(nodo: Node, material: Material) -> void:
+	for malla in _mallas(nodo):
+		malla.material_override = material
+
+
+func _material_liso(color: Color, sin_sombreado: bool) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.roughness = 0.9
+	if sin_sombreado:
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return m
+
+
+# ---------------------------------------------------------------- Revelar
+
+func _revelar() -> void:
+	if revelado:
+		return
+	revelado = true
+	visible = true
+
+	# 1) La pintura se desvanece
+	var pintura := get_node_or_null(ruta_pintura)
+	if pintura != null and pintura.has_method("desvanecer"):
+		pintura.desvanecer(duracion_desvanecer)
+
+	# 2) La pared se desvanece (con un material propio, para no afectar a las otras paredes)
+	var pared := get_node_or_null(ruta_pared) as MeshInstance3D
+	if pared != null:
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.96, 0.96, 0.96, 1.0)
+		mat.roughness = 1.0
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		pared.material_override = mat
+		var tw := create_tween()
+		tw.tween_property(mat, "albedo_color:a", 0.0, duracion_desvanecer)
+		tw.tween_callback(pared.hide)
+
+	# 3) El fondo pasa de blanco a azul noche
+	var entorno := get_node_or_null(ruta_entorno) as WorldEnvironment
+	if entorno != null and entorno.environment != null:
+		var tw2 := create_tween()
+		tw2.tween_property(entorno.environment, "background_color", color_cielo, duracion_desvanecer)
