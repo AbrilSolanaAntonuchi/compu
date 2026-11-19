@@ -1,0 +1,95 @@
+[gd_scene format=3 uid="uid://ubknq3usxani"]
+
+[ext_resource type="Script" uid="uid://du5j4ynbhihii" path="res://habitacion.gd" id="1_hab"]
+[ext_resource type="Script" uid="uid://c7foea3466a8n" path="res://pared_pintura.gd" id="2_pint"]
+[ext_resource type="Script" uid="uid://dsekr3kq3pmlb" path="res://revelar_espacio.gd" id="3_ej61l"]
+
+[sub_resource type="Environment" id="Environment_blanco"]
+background_mode = 1
+background_color = Color(1, 1, 1, 1)
+ambient_light_source = 2
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 0.55
+
+[sub_resource type="StandardMaterial3D" id="Mat_piso"]
+albedo_color = Color(0.78, 0.78, 0.8, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_piso"]
+material = SubResource("Mat_piso")
+size = Vector3(4, 0.1, 4)
+
+[sub_resource type="StandardMaterial3D" id="Mat_pared"]
+albedo_color = Color(0.96, 0.96, 0.96, 1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_techo"]
+material = SubResource("Mat_pared")
+size = Vector3(4, 0.1, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_paredS"]
+material = SubResource("Mat_pared")
+size = Vector3(4, 4, 0.1)
+
+[sub_resource type="BoxMesh" id="BoxMesh_paredE"]
+material = SubResource("Mat_pared")
+size = Vector3(0.1, 4, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_paredO"]
+material = SubResource("Mat_pared")
+size = Vector3(0.1, 4, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_paredN"]
+material = SubResource("Mat_pared")
+size = Vector3(4, 4, 0.1)
+
+[node name="habitacion" type="Node3D" unique_id=1581539309]
+script = ExtResource("1_hab")
+
+[node name="Cabeza" type="Node3D" parent="." unique_id=1771268593]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.15, 0)
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=903216333]
+environment = SubResource("Environment_blanco")
+
+[node name="Luz" type="OmniLight3D" parent="." unique_id=1773850691]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.2, 0)
+omni_range = 8.0
+
+[node name="PinturaCA" type="Node3D" parent="." unique_id=1593457339]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.1, -1.94)
+visible = false
+script = ExtResource("2_pint")
+ruta_imagen = "res://coasas/1.jpg!PinterestSmall.png"
+tamano_pixel = 10
+
+[node name="PinturaCA2" type="Node3D" parent="." unique_id=1960458293]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0.1, 1.94)
+script = ExtResource("2_pint")
+ruta_imagen = "res://coasas/pintura2.png"
+tamano_pixel = 30
+
+[node name="piso" type="MeshInstance3D" parent="." unique_id=216444366]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.5, 0)
+mesh = SubResource("BoxMesh_piso")
+
+[node name="techo" type="MeshInstance3D" parent="." unique_id=1426871862]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+mesh = SubResource("BoxMesh_techo")
+
+[node name="paredS" type="MeshInstance3D" parent="." unique_id=1861123013]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 2)
+mesh = SubResource("BoxMesh_paredS")
+
+[node name="paredE" type="MeshInstance3D" parent="." unique_id=1357157935]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0)
+mesh = SubResource("BoxMesh_paredE")
+
+[node name="paredO" type="MeshInstance3D" parent="." unique_id=584449010]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0, 0)
+mesh = SubResource("BoxMesh_paredO")
+
+[node name="paredN" type="MeshInstance3D" parent="." unique_id=1458469840]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2)
+mesh = SubResource("BoxMesh_paredN")
+
+[node name="Escenario2" type="Node3D" parent="." unique_id=1250778138]
+script = ExtResource("3_ej61l")
